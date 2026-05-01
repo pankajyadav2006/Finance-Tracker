@@ -45,6 +45,10 @@ app.use(cors());
 app.use(express.json());
 app.use('/uploads', express.static('uploads'));
 
+app.get('/', (req, res) => {
+    res.send('Finance Manager API is running!');
+});
+
 // JWT Middleware
 const authenticateToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
