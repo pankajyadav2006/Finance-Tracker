@@ -3,12 +3,12 @@ generator client {
 }
 
 datasource db {
-  provider = "mongodb"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
 model User {
-  id           String        @id @default(auto()) @map("_id") @db.ObjectId
+  id           String        @id @default(uuid())
   email        String        @unique
   name         String
   password     String
@@ -17,11 +17,11 @@ model User {
 }
 
 model Category {
-  id           String        @id @default(auto()) @map("_id") @db.ObjectId
+  id           String        @id @default(uuid())
   name         String
   type         String        // "INCOME" | "EXPENSE"
   budget       Float?        // Optional budget goal
-  userId       String?       @db.ObjectId
+  userId       String?
   user         User?         @relation(fields: [userId], references: [id])
   transactions Transaction[]
 
@@ -29,14 +29,15 @@ model Category {
 }
 
 model Transaction {
-  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  id          String   @id @default(uuid())
   amount      Float
   description String
   date        DateTime @default(now())
   type        String   // "INCOME" | "EXPENSE"
   receiptUrl  String?  // URL to uploaded receipt
-  categoryId  String   @db.ObjectId
+  categoryId  String
   category    Category @relation(fields: [categoryId], references: [id])
-  userId      String   @db.ObjectId
+  userId      String
   user        User     @relation(fields: [userId], references: [id])
 }
+
