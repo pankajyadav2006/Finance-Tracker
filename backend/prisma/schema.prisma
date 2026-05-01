@@ -34,6 +34,7 @@ model Transaction {
   description String
   date        DateTime @default(now())
   type        String   // "INCOME" | "EXPENSE"
+  receiptUrl  String?  // URL to uploaded receipt
   categoryId  String   @db.ObjectId
   category    Category @relation(fields: [categoryId], references: [id])
   userId      String   @db.ObjectId

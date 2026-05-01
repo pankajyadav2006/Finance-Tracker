@@ -6,7 +6,7 @@ import {
   PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend,
   BarChart, Bar, XAxis, YAxis, CartesianGrid
 } from 'recharts';
-import { LogOut, User as UserIcon, Plus, Trash2, Edit3, TrendingUp, TrendingDown, Wallet, Target, Settings } from 'lucide-react';
+import { LogOut, User as UserIcon, Plus, Trash2, Edit3, TrendingUp, TrendingDown, Wallet, Target, Settings, FileText, ExternalLink } from 'lucide-react';
 
 interface Category {
   id: string;
@@ -23,6 +23,7 @@ interface Transaction {
   categoryId: string;
   category: Category;
   date: string;
+  receiptUrl?: string | null;
 }
 
 interface Summary {
@@ -48,6 +49,7 @@ export default function Dashboard() {
   const [description, setDescription] = useState('');
   const [type, setType] = useState<'INCOME' | 'EXPENSE'>('EXPENSE');
   const [categoryId, setCategoryId] = useState('');
+  const [receipt, setReceipt] = useState<File | null>(null);
 
   const fetchData = async () => {
     const token = localStorage.getItem('token');
@@ -131,13 +133,18 @@ export default function Dashboard() {
     setFormLoading(true);
     const token = localStorage.getItem('token');
 
-    const payload = { 
-      amount: parseFloat(amount), 
-      description, 
-      type, 
-      categoryId,
-      date: editingId ? transactions.find(t => t.id === editingId)?.date : new Date().toISOString()
-    };
+    const formData = new FormData();
+    formData.append('amount', amount);
+    formData.append('description', description);
+    formData.append('type', type);
+    formData.append('categoryId', categoryId);
+    if (receipt) formData.append('receipt', receipt);
+    if (editingId) {
+        const trans = transactions.find(t => t.id === editingId);
+        if (trans) formData.append('date', trans.date);
+    } else {
+        formData.append('date', new Date().toISOString());
+    }
 
     try {
       const url = editingId 
@@ -149,10 +156,9 @@ export default function Dashboard() {
       const res = await fetch(url, {
         method,
         headers: {
-          'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify(payload)
+        body: formData
       });
 
       if (res.ok) {
@@ -172,6 +178,7 @@ export default function Dashboard() {
     setDescription('');
     setCategoryId('');
     setType('EXPENSE');
+    setReceipt(null);
   };
 
   const handleEdit = (t: Transaction) => {
@@ -416,6 +423,21 @@ export default function Dashboard() {
               <input type="text" value={description} onChange={(e) => setDescription(e.target.value)} className="premium-input" placeholder="What was this for?" required />
             </div>
 
+            <div className="input-group">
+              <label>Receipt Upload (Optional)</label>
+              <div style={{ position: 'relative' }}>
+                <input 
+                  type="file" 
+                  onChange={(e) => setReceipt(e.target.files?.[0] || null)} 
+                  className="premium-input" 
+                  accept="image/*,application/pdf"
+                  style={{ padding: '0.8rem' }}
+                />
+                <FileText size={18} style={{ position: 'absolute', right: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+              </div>
+              <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.4rem' }}>Images or PDFs up to 5MB</p>
+            </div>
+
             <button type="submit" className="premium-button" disabled={formLoading}>
               {formLoading ? 'Processing...' : (editingId ? 'Update Record' : 'Save Transaction')}
             </button>
@@ -442,7 +464,9 @@ export default function Dashboard() {
                   </div>
                   <div>
                     <div style={{ fontSize: '1.1rem', fontWeight: '600' }}>{t.description}</div>
-                    <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>{t.category?.name} • {new Date(t.date).toLocaleDateString()}</div>
+                    <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                        {t.category?.name} • {new Date(t.date).toLocaleDateString()}
+                    </div>
                   </div>
                 </div>
                 <div style={{ textAlign: 'right' }}>
@@ -450,6 +474,11 @@ export default function Dashboard() {
                     {t.type === 'INCOME' ? '+' : ''}{t.amount.toFixed(2)}
                   </div>
                   <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end', marginTop: '0.5rem' }}>
+                    {t.receiptUrl && (
+                        <a href={`${process.env.NEXT_PUBLIC_API_URL}${t.receiptUrl}`} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent-color)', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.3rem', textDecoration: 'none' }}>
+                            <ExternalLink size={14} /> Receipt
+                        </a>
+                    )}
                     <button onClick={() => handleEdit(t)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.3rem' }}><Edit3 size={14} /> Edit</button>
                     <button onClick={() => handleDelete(t.id)} style={{ background: 'none', border: 'none', color: 'rgba(255, 77, 77, 0.6)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.3rem' }}><Trash2 size={14} /> Delete</button>
                   </div>

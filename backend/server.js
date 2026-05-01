@@ -5,14 +5,45 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const cors = require('cors');
 const { OAuth2Client } = require('google-auth-library');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
 
 const app = express();
 const prisma = new PrismaClient();
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+
+// Multer Storage Configuration
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        const uploadPath = 'uploads/';
+        if (!fs.existsSync(uploadPath)) {
+            fs.mkdirSync(uploadPath);
+        }
+        cb(null, uploadPath);
+    },
+    filename: (req, file, cb) => {
+        cb(null, Date.now() + path.extname(file.originalname));
+    }
+});
+
+const upload = multer({ 
+    storage,
+    limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
+    fileFilter: (req, file, cb) => {
+        const allowedTypes = /jpeg|jpg|png|pdf/;
+        const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+        const mimetype = allowedTypes.test(file.mimetype);
+        if (extname && mimetype) return cb(null, true);
+        cb(new Error('Only images and PDFs are allowed'));
+    }
+});
+
 const PORT = process.env.PORT || 3001;
 
 app.use(cors());
 app.use(express.json());
+app.use('/uploads', express.static('uploads'));
 
 // JWT Middleware
 const authenticateToken = (req, res, next) => {
@@ -223,7 +254,7 @@ app.patch('/categories/:id/budget', authenticateToken, async (req, res) => {
 });
 
 // Transaction Routes
-app.post('/transactions', authenticateToken, async (req, res) => {
+app.post('/transactions', authenticateToken, upload.single('receipt'), async (req, res) => {
     try {
         let { amount, description, type, categoryId, date } = req.body;
         
@@ -231,8 +262,8 @@ app.post('/transactions', authenticateToken, async (req, res) => {
             return res.status(400).json({ message: 'All fields are required' });
         }
 
-        // Handle precision: Round to 2 decimal places
         const roundedAmount = Math.round(parseFloat(amount) * 100) / 100;
+        const receiptUrl = req.file ? `/uploads/${req.file.filename}` : null;
 
         const transaction = await prisma.transaction.create({
             data: {
@@ -240,11 +271,13 @@ app.post('/transactions', authenticateToken, async (req, res) => {
                 description,
                 type,
                 categoryId,
+                receiptUrl,
                 date: date ? new Date(date) : new Date(),
                 userId: req.user.id
             },
             include: { category: true }
         });
+
         res.status(201).json(transaction);
     } catch (error) {
         console.error(error);
@@ -252,22 +285,28 @@ app.post('/transactions', authenticateToken, async (req, res) => {
     }
 });
 
-app.put('/transactions/:id', authenticateToken, async (req, res) => {
+app.put('/transactions/:id', authenticateToken, upload.single('receipt'), async (req, res) => {
     try {
         const { id } = req.params;
         const { amount, description, type, categoryId, date } = req.body;
 
         const roundedAmount = Math.round(parseFloat(amount) * 100) / 100;
+        
+        const updateData = {
+            amount: roundedAmount,
+            description,
+            type,
+            categoryId,
+            date: new Date(date)
+        };
+
+        if (req.file) {
+            updateData.receiptUrl = `/uploads/${req.file.filename}`;
+        }
 
         const transaction = await prisma.transaction.update({
             where: { id, userId: req.user.id },
-            data: {
-                amount: roundedAmount,
-                description,
-                type,
-                categoryId,
-                date: new Date(date)
-            },
+            data: updateData,
             include: { category: true }
         });
         res.json(transaction);
