@@ -42,7 +42,21 @@ app.post('/signup', async (req, res) => {
 
         const hashedPassword = await bcrypt.hash(password, 10);
         const user = await prisma.user.create({
-            data: { name, email, password: hashedPassword }
+            data: { 
+                name, 
+                email, 
+                password: hashedPassword,
+                categories: {
+                    create: [
+                        { name: 'Salary', type: 'INCOME' },
+                        { name: 'Gift', type: 'INCOME' },
+                        { name: 'Food', type: 'EXPENSE' },
+                        { name: 'Rent', type: 'EXPENSE' },
+                        { name: 'Transport', type: 'EXPENSE' },
+                        { name: 'General', type: 'EXPENSE' }
+                    ]
+                }
+            }
         });
 
         const token = jwt.sign({ id: user.id, email: user.email }, process.env.JWT_SECRET, { expiresIn: '1h' });
@@ -90,24 +104,87 @@ app.get('/profile', authenticateToken, async (req, res) => {
     }
 });
 
-// Create Transaction
+// Category Routes
+app.get('/categories', authenticateToken, async (req, res) => {
+    try {
+        const categories = await prisma.category.findMany({
+            where: {
+                OR: [
+                    { userId: req.user.id },
+                    { userId: null } // System-wide categories if any
+                ]
+            }
+        });
+        res.json(categories);
+    } catch (error) {
+        res.status(500).json({ message: 'Error fetching categories' });
+    }
+});
+
+app.post('/categories', authenticateToken, async (req, res) => {
+    try {
+        const { name, type } = req.body;
+        const category = await prisma.category.create({
+            data: { name, type, userId: req.user.id }
+        });
+        res.status(201).json(category);
+    } catch (error) {
+        res.status(500).json({ message: 'Error creating category' });
+    }
+});
+
+app.delete('/categories/:id', authenticateToken, async (req, res) => {
+    try {
+        const { id } = req.params;
+        // Check if category has transactions
+        const transactionsCount = await prisma.transaction.count({ where: { categoryId: id } });
+        
+        if (transactionsCount > 0) {
+            // Find or create a "General" category for this user
+            let generalCategory = await prisma.category.findFirst({
+                where: { name: 'General', userId: req.user.id }
+            });
+            if (!generalCategory) {
+                generalCategory = await prisma.category.create({
+                    data: { name: 'General', type: 'EXPENSE', userId: req.user.id }
+                });
+            }
+            // Reassign transactions
+            await prisma.transaction.updateMany({
+                where: { categoryId: id },
+                data: { categoryId: generalCategory.id }
+            });
+        }
+
+        await prisma.category.delete({ where: { id } });
+        res.json({ message: 'Category deleted and transactions reassigned' });
+    } catch (error) {
+        res.status(500).json({ message: 'Error deleting category' });
+    }
+});
+
+// Transaction Routes
 app.post('/transactions', authenticateToken, async (req, res) => {
     try {
-        const { amount, description, type, category, date } = req.body;
+        let { amount, description, type, categoryId, date } = req.body;
         
-        if (!amount || !description || !type || !category) {
+        if (amount === undefined || !description || !type || !categoryId) {
             return res.status(400).json({ message: 'All fields are required' });
         }
 
+        // Handle precision: Round to 2 decimal places
+        const roundedAmount = Math.round(parseFloat(amount) * 100) / 100;
+
         const transaction = await prisma.transaction.create({
             data: {
-                amount: parseFloat(amount),
+                amount: roundedAmount,
                 description,
                 type,
-                category,
+                categoryId,
                 date: date ? new Date(date) : new Date(),
                 userId: req.user.id
-            }
+            },
+            include: { category: true }
         });
         res.status(201).json(transaction);
     } catch (error) {
@@ -116,21 +193,43 @@ app.post('/transactions', authenticateToken, async (req, res) => {
     }
 });
 
-// Get User Transactions
+app.put('/transactions/:id', authenticateToken, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { amount, description, type, categoryId, date } = req.body;
+
+        const roundedAmount = Math.round(parseFloat(amount) * 100) / 100;
+
+        const transaction = await prisma.transaction.update({
+            where: { id, userId: req.user.id },
+            data: {
+                amount: roundedAmount,
+                description,
+                type,
+                categoryId,
+                date: new Date(date)
+            },
+            include: { category: true }
+        });
+        res.json(transaction);
+    } catch (error) {
+        res.status(500).json({ message: 'Error updating transaction' });
+    }
+});
+
 app.get('/transactions', authenticateToken, async (req, res) => {
     try {
         const transactions = await prisma.transaction.findMany({
             where: { userId: req.user.id },
+            include: { category: true },
             orderBy: { date: 'desc' }
         });
         res.json(transactions);
     } catch (error) {
-        console.error(error);
         res.status(500).json({ message: 'Error fetching transactions' });
     }
 });
 
-// Get Summary
 app.get('/summary', authenticateToken, async (req, res) => {
     try {
         const transactions = await prisma.transaction.findMany({
@@ -138,17 +237,19 @@ app.get('/summary', authenticateToken, async (req, res) => {
         });
 
         const summary = transactions.reduce((acc, curr) => {
-            if (curr.type === 'INCOME') acc.totalIncome += curr.amount;
-            else acc.totalExpenses += curr.amount;
+            // Precise addition to avoid float issues
+            const amount = Math.round(curr.amount * 100);
+            if (curr.type === 'INCOME') acc.totalIncome += amount;
+            else acc.totalExpenses += amount;
             return acc;
         }, { totalIncome: 0, totalExpenses: 0 });
 
         res.json({
-            ...summary,
-            balance: summary.totalIncome - summary.totalExpenses
+            totalIncome: summary.totalIncome / 100,
+            totalExpenses: summary.totalExpenses / 100,
+            balance: (summary.totalIncome - summary.totalExpenses) / 100
         });
     } catch (error) {
-        console.error(error);
         res.status(500).json({ message: 'Error calculating summary' });
     }
 });
