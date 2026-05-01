@@ -163,6 +163,20 @@ app.delete('/categories/:id', authenticateToken, async (req, res) => {
     }
 });
 
+app.patch('/categories/:id/budget', authenticateToken, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { budget } = req.body;
+        const category = await prisma.category.update({
+            where: { id, userId: req.user.id },
+            data: { budget: parseFloat(budget) }
+        });
+        res.json(category);
+    } catch (error) {
+        res.status(500).json({ message: 'Error updating budget' });
+    }
+});
+
 // Transaction Routes
 app.post('/transactions', authenticateToken, async (req, res) => {
     try {
