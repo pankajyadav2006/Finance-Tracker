@@ -4,9 +4,11 @@ const { PrismaClient } = require('@prisma/client');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const cors = require('cors');
+const { OAuth2Client } = require('google-auth-library');
 
 const app = express();
 const prisma = new PrismaClient();
+const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 const PORT = process.env.PORT || 3001;
 
 app.use(cors());
@@ -101,6 +103,49 @@ app.get('/profile', authenticateToken, async (req, res) => {
     } catch (error) {
         console.error(error);
         res.status(500).json({ message: 'Internal server error' });
+    }
+});
+
+// Google Auth Route
+app.post('/auth/google', async (req, res) => {
+    try {
+        const { token } = req.body;
+        const ticket = await googleClient.verifyIdToken({
+            idToken: token,
+            audience: process.env.GOOGLE_CLIENT_ID
+        });
+
+        const { name, email, sub: googleId } = ticket.getPayload();
+
+        let user = await prisma.user.findUnique({ where: { email } });
+
+        if (!user) {
+            // Create user with a dummy password since they use Google
+            const hashedPassword = await bcrypt.hash(Math.random().toString(36), 10);
+            user = await prisma.user.create({
+                data: { 
+                    name, 
+                    email, 
+                    password: hashedPassword,
+                    categories: {
+                        create: [
+                            { name: 'Salary', type: 'INCOME' },
+                            { name: 'Gift', type: 'INCOME' },
+                            { name: 'Food', type: 'EXPENSE' },
+                            { name: 'Rent', type: 'EXPENSE' },
+                            { name: 'Transport', type: 'EXPENSE' },
+                            { name: 'General', type: 'EXPENSE' }
+                        ]
+                    }
+                }
+            });
+        }
+
+        const jwtToken = jwt.sign({ id: user.id, email: user.email }, process.env.JWT_SECRET, { expiresIn: '1h' });
+        res.json({ token: jwtToken, user: { id: user.id, name: user.name, email: user.email } });
+    } catch (error) {
+        console.error(error);
+        res.status(400).json({ message: 'Google authentication failed' });
     }
 });
 
